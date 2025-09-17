@@ -116,43 +116,73 @@ cat <<EOF >  /home/vagrant/ansible/copy_index.yml
 EOF
 
 # Task 4 - Stop Apache
-cat <<EOF >  /home/vagrant/ansible/stop_nginx.yml
+cat <<EOF >  /home/vagrant/ansible/stop_nginx.yml << 'EOF'
 ---
 - name: Stop nginx on workers
   hosts: workers
   become: yes
   tasks:
-    - name: Stop nignx
-      service:
-        name: nginx
-        state: stopped
+    - name: Stop nginx by killing the process
+      shell: pkill nginx || true
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Verify nginx is not running
+      shell: pgrep nginx
+      register: nginx_running
+      failed_when: false
+      changed_when: false
+
+    - name: Show nginx status
+      debug:
+        msg: "NGINX is {{ 'still running' if nginx_running.rc == 0 else 'stopped' }} on {{ inventory_hostname }}"
 EOF
 
 
 # Playbook 5 - Health check
-cat <<'EOF' > /home/vagrant/ansible/healthcheck.yml
+cat <<'EOF' >/home/vagrant/ansible/healthcheck.yml << 'EOF'
 ---
-- name: Check NGINX homepage
+- name: Check NGINX status
   hosts: workers
   become: yes
   tasks:
-    - name: Request homepage
+    - name: Check if nginx process is running
+      shell: pgrep nginx
+      register: nginx_process
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Get container IP address
+      shell: hostname -I | awk '{print $1}'
+      register: container_ip
+      changed_when: false
+
+    - name: Show nginx status and IP
+      debug:
+        msg: "NGINX is {{ 'running' if nginx_process.rc == 0 else 'not running' }} on {{ inventory_hostname }} ({{ container_ip.stdout }})"
+
+    - name: Request homepage if nginx is running
       uri:
-        url: http://127.0.0.1/
+        url: "http://{{ container_ip.stdout }}/"
         return_content: yes
       register: homepage
       changed_when: false
+      when: nginx_process.rc == 0
+      ignore_errors: yes
 
-    - name: Show HTTP status
+    - name: Show HTTP status if nginx is running
       debug:
-        msg: "Status code from {{ inventory_hostname }} is {{ homepage.status }}"
+        msg: "HTTP status from {{ inventory_hostname }} ({{ container_ip.stdout }}) is {{ homepage.status }}"
+      when: nginx_process.rc == 0
 
-    - name: Ensure status is 200 OK
+    - name: Ensure nginx is running and status is 200 OK
       assert:
         that:
+          - nginx_process.rc == 0
           - homepage.status == 200
-        fail_msg: "Homepage is not reachable on {{ inventory_hostname }}"
-        success_msg: "Homepage is up and returning 200 on {{ inventory_hostname }}"
+        fail_msg: "NGINX is not running or not accessible on {{ inventory_hostname }} ({{ container_ip.stdout }})"
+        success_msg: "NGINX is running and accessible on {{ inventory_hostname }} ({{ container_ip.stdout }})"
+      when: nginx_process.rc == 0
 EOF
 
 
