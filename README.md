@@ -240,6 +240,12 @@ vagrant ssh
   export GITHUB_PAT=
     
   ```
+  Paste your repo url here
+
+  ```bash
+   export GITHUB_REPO=
+
+  ```
 
 3. **Run Ansible playbook to setup local runner**
 

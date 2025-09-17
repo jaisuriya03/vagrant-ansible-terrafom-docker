@@ -194,7 +194,8 @@ cat <<EOF >  /home/vagrant/ansible/install_github_runner.yml
   become: yes
 
   vars:
-    github_repo: "deenamanick/vagrant-ansible-terrafom-docker"
+   # github_repo: "deenamanick/vagrant-ansible-terrafom-docker"
+    github_repo: "{{ lookup('env','GITHUB_REPO') }}"
     runner_version: "2.328.0"
     runner_dir: "/opt/actions-runner"
     github_pat: "{{ lookup('env','GITHUB_PAT') }}"

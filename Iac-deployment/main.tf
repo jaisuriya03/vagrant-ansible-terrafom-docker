@@ -23,7 +23,7 @@ resource "docker_image" "quiz_app" {
 
   triggers = {
    # app_code = filesha256("${path.module}/../Iac-quiz/app.py")
-   app_code = filesha256("/home/vagrant/Iac-deployment/Iac-quiz/app.py")
+   app_code = filesha256("/home/vagrant/Iac-deployment/IaC-quiz/app.py")
 
   }
   keep_locally = false
