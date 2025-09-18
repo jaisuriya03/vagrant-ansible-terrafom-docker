@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 export DEBIAN_FRONTEND=noninteractive
 
+# --------------------------------------------------------------------
 # Speedy mirrors & apt tuning
+# --------------------------------------------------------------------
 sudo sed -i 's|http://us.archive.ubuntu.com/ubuntu|http://mirror.cse.iitk.ac.in/ubuntu|g' /etc/apt/sources.list || true
+
 sudo tee /etc/apt/apt.conf.d/99-speed >/dev/null <<'EOF'
 Acquire::Retries "5";
 Acquire::http::Timeout "30";
@@ -14,18 +18,14 @@ APT::Install-Recommends "false";
 Dpkg::Use-Pty "0";
 Acquire::Queue-Mode "host";
 EOF
+
 sudo apt-get clean
 sudo apt-get update -y
-
-# Fastest: no PPA
 sudo apt-get install -y ansible-core
 
-# Optional SSH key, inventory, etc… (your existing content)
-
-# # SSH key for Ansible ## added in docker
-#sudo -u vagrant ssh-keygen -t rsa -b 2048 -N "" -f /home/vagrant/.ssh/id_rsa || true
-
-# Create sample inventory and config
+# --------------------------------------------------------------------
+# Inventory & Ansible config
+# --------------------------------------------------------------------
 mkdir -p /home/vagrant/ansible
 
 cat <<EOF | sudo tee /home/vagrant/ansible/inventory.ini
@@ -53,13 +53,13 @@ become = false
 
 [ssh_connection]
 ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-
 EOF
 
-# Fix permissions
 sudo chown -R vagrant:vagrant /home/vagrant/ansible
 
-# Task 1 - Install Apache
+# --------------------------------------------------------------------
+# Task 1 - Install NGINX
+# --------------------------------------------------------------------
 cat <<EOF > /home/vagrant/ansible/install_nginx.yml
 ---
 - name: Install nginx on workers
@@ -69,10 +69,12 @@ cat <<EOF > /home/vagrant/ansible/install_nginx.yml
     - name: Update apt cache
       apt:
         update_cache: yes
+
     - name: Install nginx
       apt:
         name: nginx
         state: present
+
     - name: Ensure nginx is running
       service:
         name: nginx
@@ -80,8 +82,10 @@ cat <<EOF > /home/vagrant/ansible/install_nginx.yml
         enabled: yes
 EOF
 
-# Task 2 - Create user
-cat <<EOF >  /home/vagrant/ansible/user_add.yml
+# --------------------------------------------------------------------
+# Task 2 - Create DevOps user
+# --------------------------------------------------------------------
+cat <<EOF > /home/vagrant/ansible/user_add.yml
 ---
 - name: Create DevOps user
   hosts: workers
@@ -95,8 +99,10 @@ cat <<EOF >  /home/vagrant/ansible/user_add.yml
         state: present
 EOF
 
+# --------------------------------------------------------------------
 # Task 3 - Copy index.html
-cat <<EOF >  /home/vagrant/ansible/copy_index.yml
+# --------------------------------------------------------------------
+cat <<EOF > /home/vagrant/ansible/copy_index.yml
 ---
 - name: Deploy simple index.html and restart nginx
   hosts: workers
@@ -115,8 +121,10 @@ cat <<EOF >  /home/vagrant/ansible/copy_index.yml
         state: restarted
 EOF
 
-# Task 4 - Stop Apache
-cat <<EOF >  /home/vagrant/ansible/stop_nginx.yml << 'EOF'
+# --------------------------------------------------------------------
+# Task 4 - Stop NGINX
+# --------------------------------------------------------------------
+cat <<EOF > /home/vagrant/ansible/stop_nginx.yml
 ---
 - name: Stop nginx on workers
   hosts: workers
@@ -138,9 +146,10 @@ cat <<EOF >  /home/vagrant/ansible/stop_nginx.yml << 'EOF'
         msg: "NGINX is {{ 'still running' if nginx_running.rc == 0 else 'stopped' }} on {{ inventory_hostname }}"
 EOF
 
-
-# Playbook 5 - Health check
-cat <<'EOF' >/home/vagrant/ansible/healthcheck.yml << 'EOF'
+# --------------------------------------------------------------------
+# Task 5 - Health check
+# --------------------------------------------------------------------
+cat <<EOF > /home/vagrant/ansible/healthcheck.yml
 ---
 - name: Check NGINX status
   hosts: workers
@@ -185,16 +194,15 @@ cat <<'EOF' >/home/vagrant/ansible/healthcheck.yml << 'EOF'
       when: nginx_process.rc == 0
 EOF
 
-
-# Task 5 - Install GitHub Runner
-cat <<EOF >  /home/vagrant/ansible/install_github_runner.yml
+# --------------------------------------------------------------------
+# Task 6 - Install GitHub Runner
+# --------------------------------------------------------------------
+cat <<EOF > /home/vagrant/ansible/install_github_runner.yml
 ---
 - name: Install GitHub Actions Runner
   hosts: all
   become: yes
-
   vars:
-   # github_repo: "deenamanick/vagrant-ansible-terrafom-docker"
     github_repo: "{{ lookup('env','GITHUB_REPO') }}"
     runner_version: "2.328.0"
     runner_dir: "/opt/actions-runner"
@@ -203,9 +211,13 @@ cat <<EOF >  /home/vagrant/ansible/install_github_runner.yml
   tasks:
     - name: Install dependencies
       apt:
-        name: [ "curl", "tar", "jq" ]
+        name: "{{ item }}"
         state: present
         update_cache: yes
+      loop:
+        - curl
+        - tar
+        - jq
 
     - name: Create runner directory
       file:
@@ -222,40 +234,11 @@ cat <<EOF >  /home/vagrant/ansible/install_github_runner.yml
         mode: '0644'
 
     - name: Extract GitHub runner
-      unarchive:
-        src: "{{ runner_dir }}/runner.tar.gz"
-        dest: "{{ runner_dir }}"
-        remote_src: yes
-        creates: "{{ runner_dir }}/config.sh"
+      command: tar xzf runner.tar.gz
+      args:
+        chdir: "{{ runner_dir }}"
+      creates: "{{ runner_dir }}/config.sh"
 
     - name: Request registration token from GitHub API
       uri:
-        url: "https://api.github.com/repos/{{ github_repo }}/actions/runners/registration-token"
-        method: POST
-        headers:
-          Authorization: "token {{ github_pat }}"
-          Accept: "application/vnd.github.v3+json"
-        status_code: 201
-      register: reg_token
-
-    - name: Configure GitHub runner
-      command: >
-        ./config.sh --url https://github.com/{{ github_repo }}
-        --token {{ reg_token.json.token }} --unattended
-      args:
-        chdir: "{{ runner_dir }}"
-      become_user: vagrant
-
-    - name: Install runner as service
-      command: ./svc.sh install
-      args:
-        chdir: "{{ runner_dir }}"
-
-    - name: Start runner service
-      command: ./svc.sh start
-      args:
-        chdir: "{{ runner_dir }}"
-EOF
-
-
 
